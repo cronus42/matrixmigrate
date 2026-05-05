@@ -23,6 +23,7 @@ type MattermostConfig struct {
 	ConfigPath string         `mapstructure:"config_path"` // Path to config.json on remote server
 	Database   DatabaseConfig `mapstructure:"database"`    // Optional: manual override
 	Files      FilesConfig    `mapstructure:"files"`       // File/attachment settings
+	MigrateDMs bool           `mapstructure:"migrate_dms"` // Whether to migrate direct messages (default: true)
 }
 
 // FilesConfig holds file attachment migration settings
@@ -157,6 +158,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mattermost.config_path", "/opt/mattermost/config/config.json")
 	v.SetDefault("mattermost.database.host", "localhost")
 	v.SetDefault("mattermost.database.port", 5432)
+	v.SetDefault("mattermost.migrate_dms", true) // Enable DM migration by default
 	v.SetDefault("matrix.ssh.port", 22)
 	v.SetDefault("matrix.api.base_url", "http://localhost:8008")
 	v.SetDefault("matrix.api.port", 8008) // Synapse API port for SSH tunnel

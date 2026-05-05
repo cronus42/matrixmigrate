@@ -168,7 +168,12 @@ func (i *Importer) ImportTeamsAsSpaces(teams []mattermost.Team, existingMapping 
 }
 
 // ImportChannelsAsRooms imports channels from Mattermost as Matrix rooms
-func (i *Importer) ImportChannelsAsRooms(channels []mattermost.Channel, existingMapping map[string]string, progress ImportProgressCallback) (map[string]string, *ImportStats, error) {
+func (i *Importer) ImportChannelsAsRooms(channels []mattermost.Channel, userMapping map[string]string, existingMapping map[string]string, progress ImportProgressCallback) (map[string]string, *ImportStats, error) {
+	return i.ImportChannelsAsRoomsWithDMs(channels, userMapping, existingMapping, true, progress)
+}
+
+// ImportChannelsAsRoomsWithDMs imports channels from Mattermost as Matrix rooms with optional DM support
+func (i *Importer) ImportChannelsAsRoomsWithDMs(channels []mattermost.Channel, userMapping map[string]string, existingMapping map[string]string, migrateDMs bool, progress ImportProgressCallback) (map[string]string, *ImportStats, error) {
 	mapping := make(map[string]string)
 	stats := &ImportStats{}
 	total := len(channels)
@@ -189,9 +194,23 @@ func (i *Importer) ImportChannelsAsRooms(channels []mattermost.Channel, existing
 			continue
 		}
 
-		// Skip direct messages (2-person DMs)
+		// Handle direct messages
 		if channel.IsDirect() {
-			stats.RoomsSkipped++
+			if !migrateDMs {
+				stats.DMRoomsSkipped++
+				continue
+			}
+			roomID, err := i.importDMAsRoom(channel, userMapping, existingMapping)
+			if err != nil {
+				logger.Warn("Failed to import DM: %v", err)
+				stats.DMRoomsFailed++
+			} else if roomID != "" {
+				mapping[channel.ID] = roomID
+				stats.DMRoomsCreated++
+				logger.Success("Created DM room -> %s", roomID)
+			} else {
+				stats.DMRoomsSkipped++
+			}
 			continue
 		}
 
@@ -221,6 +240,68 @@ func (i *Importer) ImportChannelsAsRooms(channels []mattermost.Channel, existing
 	}
 
 	return mapping, stats, nil
+}
+
+// importDMAsRoom imports a Mattermost DM channel as a Matrix DM room
+// Returns the room ID if successful, empty string if skipped, error if failed
+func (i *Importer) importDMAsRoom(channel mattermost.Channel, userMapping map[string]string, existingMapping map[string]string) (string, error) {
+	// Skip if already imported
+	if roomID, exists := existingMapping[channel.ID]; exists {
+		logger.Info("DM room already imported, skipped")
+		return roomID, nil
+	}
+
+	// Parse DM user IDs
+	mmUserA, mmUserB, ok := channel.DMUserIDs()
+	if !ok {
+		return "", fmt.Errorf("invalid DM channel name format: %s", channel.Name)
+	}
+
+	// Skip self-DMs
+	if mmUserA == mmUserB {
+		logger.Info("Skipping self-DM for user %s", mmUserA)
+		return "", nil
+	}
+
+	// Look up both users in mapping
+	mxUserA, existsA := userMapping[mmUserA]
+	mxUserB, existsB := userMapping[mmUserB]
+
+	if !existsA || !existsB {
+		if !existsA {
+			logger.Warn("DM user %s not in mapping, skipping DM", mmUserA)
+		}
+		if !existsB {
+			logger.Warn("DM user %s not in mapping, skipping DM", mmUserB)
+		}
+		return "", nil
+	}
+
+	// Create DM room with both users invited
+	resp, err := i.client.CreateDMRoom([]string{mxUserA, mxUserB})
+	if err != nil {
+		return "", fmt.Errorf("failed to create DM room: %w", err)
+	}
+
+	logger.Info("Created DM room %s for users %s and %s", resp.RoomID, mxUserA, mxUserB)
+
+	// Force-join both users using Admin API (no invitation acceptance required)
+	if err := i.client.ForceJoinUser(resp.RoomID, mxUserA); err != nil {
+		logger.Warn("Failed to force-join %s to DM: %v", mxUserA, err)
+		// Continue even if one user fails to join
+	}
+	if err := i.client.ForceJoinUser(resp.RoomID, mxUserB); err != nil {
+		logger.Warn("Failed to force-join %s to DM: %v", mxUserB, err)
+		// Continue even if one user fails to join
+	}
+
+	// Remove admin user from DM room (DMs should only contain the two participants)
+	if err := i.client.LeaveRoom(resp.RoomID); err != nil {
+		logger.Warn("Failed to remove admin from DM room: %v", err)
+		// Non-critical error - room is still functional
+	}
+
+	return resp.RoomID, nil
 }
 
 // ApplyTeamMemberships invites users to spaces based on team memberships
@@ -398,12 +479,17 @@ type ExistingMappings struct {
 // ImportAssets imports all assets (users, teams as spaces, channels as rooms)
 // If existingMappings is provided, already imported items will be skipped
 func (i *Importer) ImportAssets(assets *mattermost.Assets, existingMappings *ExistingMappings, progress ImportProgressCallback) (*ImportAssetsResult, error) {
+	return i.ImportAssetsWithDMs(assets, existingMappings, true, progress)
+}
+
+// ImportAssetsWithDMs imports all assets with optional DM support
+func (i *Importer) ImportAssetsWithDMs(assets *mattermost.Assets, existingMappings *ExistingMappings, migrateDMs bool, progress ImportProgressCallback) (*ImportAssetsResult, error) {
 	result := &ImportAssetsResult{
 		Stats: &ImportStats{},
 	}
 
 	logger.Info("=== ImportAssets Started ===")
-	logger.Info("Assets to import: %d users, %d teams, %d channels", 
+	logger.Info("Assets to import: %d users, %d teams, %d channels",
 		len(assets.Users), len(assets.Teams), len(assets.Channels))
 
 	// Initialize empty mappings if not provided
@@ -444,7 +530,7 @@ func (i *Importer) ImportAssets(assets *mattermost.Assets, existingMappings *Exi
 	result.Stats.SpacesFailed = spaceStats.SpacesFailed
 
 	// Import channels as rooms
-	roomMapping, roomStats, err := i.ImportChannelsAsRooms(assets.Channels, existingMappings.Rooms, progress)
+	roomMapping, roomStats, err := i.ImportChannelsAsRoomsWithDMs(assets.Channels, userMapping, existingMappings.Rooms, migrateDMs, progress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to import channels: %w", err)
 	}
@@ -452,6 +538,9 @@ func (i *Importer) ImportAssets(assets *mattermost.Assets, existingMappings *Exi
 	result.Stats.RoomsCreated = roomStats.RoomsCreated
 	result.Stats.RoomsSkipped = roomStats.RoomsSkipped
 	result.Stats.RoomsFailed = roomStats.RoomsFailed
+	result.Stats.DMRoomsCreated = roomStats.DMRoomsCreated
+	result.Stats.DMRoomsSkipped = roomStats.DMRoomsSkipped
+	result.Stats.DMRoomsFailed = roomStats.DMRoomsFailed
 
 	return result, nil
 }

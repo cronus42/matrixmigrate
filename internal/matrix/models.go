@@ -82,6 +82,11 @@ type JoinRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// MembershipRequest is the request body for setting user membership in a room
+type MembershipRequest struct {
+	Membership string `json:"membership"`
+}
+
 // GenericResponse is a generic API response
 type GenericResponse struct {
 	Errcode string `json:"errcode,omitempty"`
@@ -133,6 +138,9 @@ type ImportStats struct {
 	RoomsCreated    int `json:"rooms_created"`
 	RoomsSkipped    int `json:"rooms_skipped"`
 	RoomsFailed     int `json:"rooms_failed"`
+	DMRoomsCreated  int `json:"dm_rooms_created"`
+	DMRoomsSkipped  int `json:"dm_rooms_skipped"`
+	DMRoomsFailed   int `json:"dm_rooms_failed"`
 	MembersAdded    int `json:"members_added"`
 	MembersSkipped  int `json:"members_skipped"`
 	MembersFailed   int `json:"members_failed"`
