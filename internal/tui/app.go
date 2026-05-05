@@ -628,6 +628,21 @@ func (m Model) renderSuccess() string {
 			sections = append(sections, "")
 		}
 
+		// Import stats - DMs
+		if r.DMRoomsCreated > 0 || r.DMRoomsSkipped > 0 || r.DMRoomsFailed > 0 {
+			sections = append(sections, SubtitleStyle.Render("💌 Direct Messages:"))
+			if r.DMRoomsCreated > 0 {
+				sections = append(sections, SuccessStyle.Render(fmt.Sprintf("   ✓ Created: %d", r.DMRoomsCreated)))
+			}
+			if r.DMRoomsSkipped > 0 {
+				sections = append(sections, DimStyle.Render(fmt.Sprintf("   ⊘ Skipped: %d", r.DMRoomsSkipped)))
+			}
+			if r.DMRoomsFailed > 0 {
+				sections = append(sections, ErrorStyle.Render(fmt.Sprintf("   ✗ Failed: %d", r.DMRoomsFailed)))
+			}
+			sections = append(sections, "")
+		}
+
 		// Membership import stats
 		if r.MembersAdded > 0 || r.MembersSkipped > 0 || r.MembersFailed > 0 {
 			sections = append(sections, SubtitleStyle.Render("👤 Memberships:"))

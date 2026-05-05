@@ -370,6 +370,18 @@ func (c *Client) CreateRegularRoom(name, topic string, public bool) (*CreateRoom
 	return c.CreateRoom(req)
 }
 
+// CreateDMRoom creates a direct message room between users
+func (c *Client) CreateDMRoom(invite []string) (*CreateRoomResponse, error) {
+	req := &CreateRoomRequest{
+		Visibility: string(VisibilityPrivate),
+		Preset:     string(PresetTrustedPrivateChat),
+		IsDirect:   true,
+		Invite:     invite,
+	}
+
+	return c.CreateRoom(req)
+}
+
 // InviteUser invites a user to a room
 func (c *Client) InviteUser(roomID, userID string) error {
 	endpoint := fmt.Sprintf("/_matrix/client/v3/rooms/%s/invite", url.PathEscape(roomID))
@@ -414,6 +426,52 @@ func (c *Client) JoinRoom(roomID string) error {
 		var resp GenericResponse
 		json.Unmarshal(body, &resp)
 		return fmt.Errorf("API error (%d): %s - %s", statusCode, resp.Errcode, resp.Error)
+	}
+
+	return nil
+}
+
+// LeaveRoom makes the admin user leave a room
+func (c *Client) LeaveRoom(roomID string) error {
+	endpoint := fmt.Sprintf("/_matrix/client/v3/rooms/%s/leave", url.PathEscape(roomID))
+
+	body, statusCode, err := c.doRequest("POST", endpoint, nil)
+	if err != nil {
+		return err
+	}
+
+	if statusCode != http.StatusOK {
+		var resp GenericResponse
+		json.Unmarshal(body, &resp)
+		return fmt.Errorf("API error (%d): %s - %s", statusCode, resp.Errcode, resp.Error)
+	}
+
+	return nil
+}
+
+// ForceJoinUser makes a specific user join a room using Synapse Admin API
+// This sets the user's membership state to "join" without requiring invitation acceptance
+// Required for message import with user impersonation
+func (c *Client) ForceJoinUser(roomID, userID string) error {
+	endpoint := fmt.Sprintf("/_synapse/admin/v1/rooms/%s/members/%s",
+		url.PathEscape(roomID), url.PathEscape(userID))
+
+	req := &MembershipRequest{
+		Membership: "join",
+	}
+
+	body, statusCode, err := c.doRequest("PUT", endpoint, req)
+	if err != nil {
+		return err
+	}
+
+	// 200 OK is success; 204 No Content can also indicate success
+	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
+		var resp GenericResponse
+		if jsonErr := json.Unmarshal(body, &resp); jsonErr == nil {
+			return fmt.Errorf("Admin API error (%d): %s - %s", statusCode, resp.Errcode, resp.Error)
+		}
+		return fmt.Errorf("Admin API error (%d): %s", statusCode, string(body))
 	}
 
 	return nil

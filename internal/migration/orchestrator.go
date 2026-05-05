@@ -107,6 +107,9 @@ type OperationResult struct {
 	RoomsCreated   int
 	RoomsSkipped   int
 	RoomsFailed    int
+	DMRoomsCreated int
+	DMRoomsSkipped int
+	DMRoomsFailed  int
 	RoomsLinked    int
 
 	// Membership stats
@@ -436,7 +439,7 @@ func (o *Orchestrator) ImportAssets(progress ProgressCallback) (*OperationResult
 	}
 
 	// Import assets (passing existing mappings to skip duplicates)
-	importResult, err := importer.ImportAssets(&assets, existingMappings, importProgress)
+	importResult, err := importer.ImportAssetsWithDMs(&assets, existingMappings, o.config.Mattermost.MigrateDMs, importProgress)
 	if err != nil {
 		o.state.FailStep(StepImportAssets, err)
 		o.SaveState()
@@ -453,6 +456,9 @@ func (o *Orchestrator) ImportAssets(progress ProgressCallback) (*OperationResult
 	result.RoomsCreated = importResult.Stats.RoomsCreated
 	result.RoomsSkipped = importResult.Stats.RoomsSkipped
 	result.RoomsFailed = importResult.Stats.RoomsFailed
+	result.DMRoomsCreated = importResult.Stats.DMRoomsCreated
+	result.DMRoomsSkipped = importResult.Stats.DMRoomsSkipped
+	result.DMRoomsFailed = importResult.Stats.DMRoomsFailed
 
 	// Create mapping
 	mapping := NewMapping(o.config.Matrix.Homeserver)

@@ -98,12 +98,14 @@ func runImportAssets(cmd *cobra.Command, args []string) error {
 	}
 
 	printSuccess(i18n.T("messages.mapping_saved", result.OutputFile))
-	printInfo(fmt.Sprintf("  Users: created=%d, skipped=%d, failed=%d", 
+	printInfo(fmt.Sprintf("  Users: created=%d, skipped=%d, failed=%d",
 		result.UsersCreated, result.UsersSkipped, result.UsersFailed))
-	printInfo(fmt.Sprintf("  Spaces: created=%d, skipped=%d, failed=%d", 
+	printInfo(fmt.Sprintf("  Spaces: created=%d, skipped=%d, failed=%d",
 		result.SpacesCreated, result.SpacesSkipped, result.SpacesFailed))
-	printInfo(fmt.Sprintf("  Rooms: created=%d, skipped=%d, failed=%d, linked=%d", 
+	printInfo(fmt.Sprintf("  Rooms: created=%d, skipped=%d, failed=%d, linked=%d",
 		result.RoomsCreated, result.RoomsSkipped, result.RoomsFailed, result.RoomsLinked))
+	printInfo(fmt.Sprintf("  DMs: created=%d, skipped=%d, failed=%d",
+		result.DMRoomsCreated, result.DMRoomsSkipped, result.DMRoomsFailed))
 	printSuccess(i18n.T("messages.step_completed", "import_assets"))
 
 	return nil

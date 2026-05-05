@@ -33,6 +33,10 @@ mattermost:
   #   user: "mmuser"
   #   password_env: "MM_DB_PASSWORD"
   
+  # Migrate direct messages (DMs) as Matrix DM rooms (default: true)
+  # Set to false to skip DM migration and keep current behavior
+  migrate_dms: true
+
   # File attachment migration settings
   files:
     # Migration mode:
@@ -129,43 +133,47 @@ data:
 # ========================================
 #
 # If you're getting too many 429 (rate limit) errors during migration,
-# you can TEMPORARILY disable rate limiting on your Synapse server:
+# you can TEMPORARILY loosen limits in Synapse homeserver.yaml.
 #
-# Add this to your homeserver.yaml (Synapse config):
+# Do NOT use per_second: 0 AND burst_count: 0 — Synapse treats burst_count 0 as
+# "no burst allowance" and rejects almost every request (e.g. rc_login.address 429).
+# Use very large numbers instead, then restore defaults after migration.
+#
+# Example (homeserver.yaml):
 #
 #   rc_message:
-#     per_second: 0
-#     burst_count: 0
+#     per_second: 10000
+#     burst_count: 1000000
 #   rc_registration:
-#     per_second: 0
-#     burst_count: 0
+#     per_second: 10000
+#     burst_count: 1000000
 #   rc_login:
 #     address:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #     account:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #     failed_attempts:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #   rc_admin_redaction:
-#     per_second: 0
-#     burst_count: 0
+#     per_second: 10000
+#     burst_count: 1000000
 #   rc_joins:
 #     local:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #     remote:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #   rc_invites:
 #     per_room:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #     per_user:
-#       per_second: 0
-#       burst_count: 0
+#       per_second: 10000
+#       burst_count: 1000000
 #
 # IMPORTANT: Remember to restart Synapse and re-enable rate limiting
 # after the migration is complete for security!
