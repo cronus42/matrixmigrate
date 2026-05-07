@@ -23,7 +23,7 @@ type MattermostConfig struct {
 	ConfigPath string         `mapstructure:"config_path"` // Path to config.json on remote server
 	Database   DatabaseConfig `mapstructure:"database"`    // Optional: manual override
 	Files      FilesConfig    `mapstructure:"files"`       // File/attachment settings
-	MigrateDMs bool           `mapstructure:"migrate_dms"` // Whether to migrate direct messages (default: true)
+	IncludeDMs bool           `mapstructure:"include_dms"` // Whether to migrate direct messages (default: true)
 }
 
 // FilesConfig holds file attachment migration settings
@@ -158,7 +158,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mattermost.config_path", "/opt/mattermost/config/config.json")
 	v.SetDefault("mattermost.database.host", "localhost")
 	v.SetDefault("mattermost.database.port", 5432)
-	v.SetDefault("mattermost.migrate_dms", true) // Enable DM migration by default
+	v.SetDefault("mattermost.include_dms", true) // Enable DM migration by default
 	v.SetDefault("matrix.ssh.port", 22)
 	v.SetDefault("matrix.api.base_url", "http://localhost:8008")
 	v.SetDefault("matrix.api.port", 8008) // Synapse API port for SSH tunnel
@@ -212,12 +212,11 @@ func expandPath(path string) string {
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
-	// Validate Mattermost config if SSH host is provided
+	// Validate Mattermost SSH config if SSH host is provided
 	if c.Mattermost.SSH.Host != "" {
 		if c.Mattermost.SSH.User == "" {
 			return fmt.Errorf("mattermost.ssh.user is required")
 		}
-		// Either key_path or password_env must be provided
 		hasKey := c.Mattermost.SSH.KeyPath != ""
 		hasPassword := c.Mattermost.SSH.PasswordEnv != ""
 		if !hasKey && !hasPassword {
@@ -225,21 +224,20 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate Matrix config if SSH host is provided
+	// Validate Matrix SSH config if SSH host is provided
 	if c.Matrix.SSH.Host != "" {
 		if c.Matrix.SSH.User == "" {
 			return fmt.Errorf("matrix.ssh.user is required")
 		}
-		// Either key_path or password_env must be provided
 		hasKey := c.Matrix.SSH.KeyPath != ""
 		hasPassword := c.Matrix.SSH.PasswordEnv != ""
 		if !hasKey && !hasPassword {
 			return fmt.Errorf("matrix.ssh: either key_path or password_env is required")
 		}
-		if c.Matrix.Homeserver == "" {
-			return fmt.Errorf("matrix.homeserver is required")
-		}
-		// Check that either auth or admin token is provided
+	}
+
+	// Validate Matrix API auth whenever homeserver is configured (SSH or local mode)
+	if c.Matrix.Homeserver != "" {
 		hasAuth := c.Matrix.Auth.Username != "" && c.Matrix.Auth.PasswordEnv != ""
 		hasToken := c.Matrix.API.AdminTokenEnv != ""
 		if !hasAuth && !hasToken {
