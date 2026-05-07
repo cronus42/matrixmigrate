@@ -33,9 +33,9 @@ mattermost:
   #   user: "mmuser"
   #   password_env: "MM_DB_PASSWORD"
   
-  # Migrate direct messages (DMs) as Matrix DM rooms (default: true)
-  # Set to false to skip DM migration and keep current behavior
-  migrate_dms: true
+  # Export/import 1:1 DM channels (type D) as Matrix DM rooms (default: true)
+  # Requires re-export of assets after changing this setting
+  include_dms: true
 
   # File attachment migration settings
   files:
@@ -186,8 +186,25 @@ data:
 # EXAMPLE CONFIGURATIONS
 # ========================================
 
-# Example 1: Both servers with SSH key
-# ------------------------------------
+# Example 1: Local mode (script, Mattermost, and Matrix on the same server)
+# -------------------------------------------------------------------------
+# No SSH configuration needed — connections go directly to localhost.
+#
+# mattermost:
+#   config_path: "/opt/mattermost/config/config.json"
+#   # database credentials are read automatically from config.json
+#
+# matrix:
+#   api:
+#     base_url: "http://localhost:8008"
+#   auth:
+#     username: "admin"
+#     password_env: "MATRIX_ADMIN_PASSWORD"
+#   homeserver: "company.com"
+
+
+# Example 2: Both servers with SSH key (remote mode)
+# ---------------------------------------------------
 # mattermost:
 #   ssh:
 #     host: "mm.company.com"
@@ -206,7 +223,7 @@ data:
 #   homeserver: "company.com"
 
 
-# Example 2: Mattermost with root password, Matrix with key
+# Example 3: Mattermost with root password, Matrix with key
 # ---------------------------------------------------------
 # mattermost:
 #   ssh:
@@ -226,7 +243,7 @@ data:
 #   homeserver: "company.com"
 
 
-# Example 3: Both with password auth
+# Example 4: Both with password auth
 # ----------------------------------
 # mattermost:
 #   ssh:

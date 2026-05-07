@@ -126,8 +126,6 @@ type OperationResult struct {
 // ConnectMattermost establishes connection to Mattermost
 func (o *Orchestrator) ConnectMattermost() error {
 	cfg := o.config.Mattermost
-	passphrase := o.config.GetSSHKeyPassphrase("mattermost")
-	sshPassword := o.config.GetSSHPassword("mattermost")
 
 	// Get database credentials
 	var dbHost string
@@ -137,14 +135,14 @@ func (o *Orchestrator) ConnectMattermost() error {
 	var dbName string
 
 	if o.config.HasManualDatabaseConfig() {
-		// Use manual config
 		dbHost = cfg.Database.Host
 		dbPort = cfg.Database.Port
 		dbUser = cfg.Database.User
 		dbPassword = o.config.GetMattermostDBPassword()
 		dbName = cfg.Database.Name
-	} else {
-		// Read from Mattermost config.json via SSH
+	} else if cfg.SSH.Host != "" {
+		passphrase := o.config.GetSSHKeyPassphrase("mattermost")
+		sshPassword := o.config.GetSSHPassword("mattermost")
 		creds, err := mattermost.GetDatabaseCredentials(cfg.SSH, passphrase, sshPassword, cfg.ConfigPath)
 		if err != nil {
 			return fmt.Errorf("failed to read database credentials from Mattermost config: %w", err)
@@ -154,114 +152,142 @@ func (o *Orchestrator) ConnectMattermost() error {
 		dbUser = creds.User
 		dbPassword = creds.Password
 		dbName = creds.Database
+	} else {
+		// Local mode: read config.json directly from the filesystem
+		creds, err := mattermost.GetDatabaseCredentialsLocal(cfg.ConfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to read database credentials from local Mattermost config: %w", err)
+		}
+		dbHost = creds.Host
+		dbPort = creds.Port
+		dbUser = creds.User
+		dbPassword = creds.Password
+		dbName = creds.Database
 	}
 
-	// Get an available local port for the tunnel
-	localPort, err := ssh.GetLocalPort()
-	if err != nil {
-		return fmt.Errorf("failed to get local port: %w", err)
+	var dsn string
+	if cfg.SSH.Host != "" {
+		// Remote mode: tunnel the DB connection through SSH
+		passphrase := o.config.GetSSHKeyPassphrase("mattermost")
+		sshPassword := o.config.GetSSHPassword("mattermost")
+
+		localPort, err := ssh.GetLocalPort()
+		if err != nil {
+			return fmt.Errorf("failed to get local port: %w", err)
+		}
+
+		tunnelCfg := ssh.TunnelConfig{
+			SSHConfig:  cfg.SSH,
+			LocalPort:  localPort,
+			RemoteHost: dbHost,
+			RemotePort: dbPort,
+			Passphrase: passphrase,
+			Password:   sshPassword,
+		}
+
+		_, err = o.tunnelManager.CreateTunnel("mattermost", tunnelCfg)
+		if err != nil {
+			return fmt.Errorf("failed to create SSH tunnel: %w", err)
+		}
+
+		dsn = fmt.Sprintf(
+			"host=127.0.0.1 port=%d user=%s password=%s dbname=%s sslmode=disable",
+			localPort, dbUser, dbPassword, dbName,
+		)
+		o.state.MattermostHost = cfg.SSH.Host
+	} else {
+		// Local mode: connect directly
+		dsn = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+			dbHost, dbPort, dbUser, dbPassword, dbName,
+		)
+		o.state.MattermostHost = dbHost
 	}
 
-	// Create SSH tunnel to database
-	tunnelCfg := ssh.TunnelConfig{
-		SSHConfig:  cfg.SSH,
-		LocalPort:  localPort,
-		RemoteHost: dbHost,
-		RemotePort: dbPort,
-		Passphrase: passphrase,
-		Password:   sshPassword,
-	}
-
-	_, err = o.tunnelManager.CreateTunnel("mattermost", tunnelCfg)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH tunnel: %w", err)
-	}
-
-	// Build DSN using local tunnel port
-	dsn := fmt.Sprintf(
-		"host=127.0.0.1 port=%d user=%s password=%s dbname=%s sslmode=disable",
-		localPort,
-		dbUser,
-		dbPassword,
-		dbName,
-	)
-
-	// Connect to database
 	client, err := mattermost.NewClient(dsn)
 	if err != nil {
-		o.tunnelManager.CloseTunnel("mattermost")
+		if cfg.SSH.Host != "" {
+			o.tunnelManager.CloseTunnel("mattermost")
+		}
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	o.mmClient = client
-	o.state.MattermostHost = cfg.SSH.Host
 	return nil
 }
 
 // ConnectMatrix establishes connection to Matrix
 func (o *Orchestrator) ConnectMatrix() error {
 	cfg := o.config.Matrix
-	passphrase := o.config.GetSSHKeyPassphrase("matrix")
-	sshPassword := o.config.GetSSHPassword("matrix")
 
-	// Get an available local port for the tunnel
-	localPort, err := ssh.GetLocalPort()
-	if err != nil {
-		return fmt.Errorf("failed to get local port: %w", err)
-	}
+	var baseURL string
 
-	// Get remote API port from config (default: 8008)
-	remotePort := cfg.API.Port
-	if remotePort == 0 {
-		remotePort = 8008
-	}
+	if cfg.SSH.Host != "" {
+		// Remote mode: tunnel through SSH
+		passphrase := o.config.GetSSHKeyPassphrase("matrix")
+		sshPassword := o.config.GetSSHPassword("matrix")
 
-	// Create SSH tunnel to Matrix API
-	tunnelCfg := ssh.TunnelConfig{
-		SSHConfig:  cfg.SSH,
-		LocalPort:  localPort,
-		RemoteHost: "127.0.0.1",
-		RemotePort: remotePort,
-		Passphrase: passphrase,
-		Password:   sshPassword,
-	}
+		localPort, err := ssh.GetLocalPort()
+		if err != nil {
+			return fmt.Errorf("failed to get local port: %w", err)
+		}
 
-	logger.Info("Creating SSH tunnel to Matrix API (local:%d -> remote:127.0.0.1:%d)", localPort, remotePort)
+		remotePort := cfg.API.Port
+		if remotePort == 0 {
+			remotePort = 8008
+		}
 
-	_, err = o.tunnelManager.CreateTunnel("matrix", tunnelCfg)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH tunnel: %w", err)
-	}
+		tunnelCfg := ssh.TunnelConfig{
+			SSHConfig:  cfg.SSH,
+			LocalPort:  localPort,
+			RemoteHost: "127.0.0.1",
+			RemotePort: remotePort,
+			Passphrase: passphrase,
+			Password:   sshPassword,
+		}
 
-	// Use local tunnel URL
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+		logger.Info("Creating SSH tunnel to Matrix API (local:%d -> remote:127.0.0.1:%d)", localPort, remotePort)
 
-	// Wait a moment for the tunnel to be ready
-	time.Sleep(500 * time.Millisecond)
+		_, err = o.tunnelManager.CreateTunnel("matrix", tunnelCfg)
+		if err != nil {
+			return fmt.Errorf("failed to create SSH tunnel: %w", err)
+		}
 
-	// Verify tunnel is working by attempting a simple HTTP request
-	if err := o.waitForTunnel(baseURL, 5*time.Second); err != nil {
-		o.tunnelManager.CloseTunnel("matrix")
-		return fmt.Errorf("SSH tunnel to Matrix API is not responding on port %d: %w (is Synapse running and listening on port %d?)", remotePort, err, remotePort)
+		baseURL = fmt.Sprintf("http://127.0.0.1:%d", localPort)
+		time.Sleep(500 * time.Millisecond)
+
+		if err := o.waitForTunnel(baseURL, 5*time.Second); err != nil {
+			o.tunnelManager.CloseTunnel("matrix")
+			return fmt.Errorf("SSH tunnel to Matrix API is not responding on port %d: %w (is Synapse running and listening on port %d?)", remotePort, err, remotePort)
+		}
+
+		o.state.MatrixHost = cfg.SSH.Host
+	} else {
+		// Local mode: connect directly to the configured API URL
+		baseURL = o.config.MatrixAPIURL()
+		logger.Info("Connecting directly to Matrix API at %s", baseURL)
+		o.state.MatrixHost = baseURL
 	}
 
 	// Get access token (either from config or via login)
 	var accessToken string
-	
+
 	if o.config.UseTokenAuth() {
-		// Use provided admin token
 		accessToken = o.config.GetMatrixAdminToken()
 	} else {
-		// Login with username/password
 		password := o.config.GetMatrixPassword()
 		if password == "" {
-			o.tunnelManager.CloseTunnel("matrix")
+			if cfg.SSH.Host != "" {
+				o.tunnelManager.CloseTunnel("matrix")
+			}
 			return fmt.Errorf("Matrix password not found in environment variable %s", cfg.Auth.PasswordEnv)
 		}
 
 		loginResp, err := matrix.Login(baseURL, cfg.Auth.Username, password)
 		if err != nil {
-			o.tunnelManager.CloseTunnel("matrix")
+			if cfg.SSH.Host != "" {
+				o.tunnelManager.CloseTunnel("matrix")
+			}
 			return fmt.Errorf("failed to login to Matrix: %w", err)
 		}
 		accessToken = loginResp.AccessToken
@@ -278,7 +304,9 @@ func (o *Orchestrator) ConnectMatrix() error {
 
 	// Test connection
 	if err := client.TestConnection(); err != nil {
-		o.tunnelManager.CloseTunnel("matrix")
+		if cfg.SSH.Host != "" {
+			o.tunnelManager.CloseTunnel("matrix")
+		}
 		return fmt.Errorf("failed to connect to Matrix API: %w", err)
 	}
 
@@ -287,13 +315,12 @@ func (o *Orchestrator) ConnectMatrix() error {
 	if err != nil {
 		logger.Warn("Could not auto-detect homeserver: %v, using configured value: %s", err, cfg.Homeserver)
 	} else if detectedHomeserver != cfg.Homeserver {
-		logger.Info("Auto-detected homeserver '%s' differs from configured '%s', using detected value", 
+		logger.Info("Auto-detected homeserver '%s' differs from configured '%s', using detected value",
 			detectedHomeserver, cfg.Homeserver)
 		client.SetHomeserver(detectedHomeserver)
 	}
 
 	o.mxClient = client
-	o.state.MatrixHost = cfg.SSH.Host
 	return nil
 }
 
@@ -439,7 +466,7 @@ func (o *Orchestrator) ImportAssets(progress ProgressCallback) (*OperationResult
 	}
 
 	// Import assets (passing existing mappings to skip duplicates)
-	importResult, err := importer.ImportAssetsWithDMs(&assets, existingMappings, o.config.Mattermost.MigrateDMs, importProgress)
+	importResult, err := importer.ImportAssetsWithDMs(&assets, existingMappings, o.config.Mattermost.IncludeDMs, importProgress)
 	if err != nil {
 		o.state.FailStep(StepImportAssets, err)
 		o.SaveState()
@@ -669,28 +696,28 @@ func (o *Orchestrator) ImportMemberships(progress ProgressCallback) (*OperationR
 // TestMattermostConnection tests the Mattermost connection
 func (o *Orchestrator) TestMattermostConnection() error {
 	cfg := o.config.Mattermost
-	passphrase := o.config.GetSSHKeyPassphrase("mattermost")
-	sshPassword := o.config.GetSSHPassword("mattermost")
 
-	// Test SSH connection first
-	if err := ssh.TestConnectionWithPassword(cfg.SSH, passphrase, sshPassword); err != nil {
-		return fmt.Errorf("SSH connection failed: %w", err)
-	}
+	// Test SSH connection only when SSH is configured
+	if cfg.SSH.Host != "" {
+		passphrase := o.config.GetSSHKeyPassphrase("mattermost")
+		sshPassword := o.config.GetSSHPassword("mattermost")
 
-	// If not using manual config, test reading config.json
-	if !o.config.HasManualDatabaseConfig() {
-		_, err := mattermost.GetDatabaseCredentials(cfg.SSH, passphrase, sshPassword, cfg.ConfigPath)
-		if err != nil {
-			return fmt.Errorf("failed to read Mattermost config: %w", err)
+		if err := ssh.TestConnectionWithPassword(cfg.SSH, passphrase, sshPassword); err != nil {
+			return fmt.Errorf("SSH connection failed: %w", err)
+		}
+
+		if !o.config.HasManualDatabaseConfig() {
+			_, err := mattermost.GetDatabaseCredentials(cfg.SSH, passphrase, sshPassword, cfg.ConfigPath)
+			if err != nil {
+				return fmt.Errorf("failed to read Mattermost config: %w", err)
+			}
 		}
 	}
 
-	// Connect and test database
 	if err := o.ConnectMattermost(); err != nil {
 		return err
 	}
 
-	// Test database query
 	if err := o.mmClient.Ping(); err != nil {
 		return fmt.Errorf("database ping failed: %w", err)
 	}
@@ -701,15 +728,17 @@ func (o *Orchestrator) TestMattermostConnection() error {
 // TestMatrixConnection tests the Matrix connection
 func (o *Orchestrator) TestMatrixConnection() error {
 	cfg := o.config.Matrix
-	passphrase := o.config.GetSSHKeyPassphrase("matrix")
-	sshPassword := o.config.GetSSHPassword("matrix")
 
-	// Test SSH connection first
-	if err := ssh.TestConnectionWithPassword(cfg.SSH, passphrase, sshPassword); err != nil {
-		return fmt.Errorf("SSH connection failed: %w", err)
+	// Test SSH connection only when SSH is configured
+	if cfg.SSH.Host != "" {
+		passphrase := o.config.GetSSHKeyPassphrase("matrix")
+		sshPassword := o.config.GetSSHPassword("matrix")
+
+		if err := ssh.TestConnectionWithPassword(cfg.SSH, passphrase, sshPassword); err != nil {
+			return fmt.Errorf("SSH connection failed: %w", err)
+		}
 	}
 
-	// Connect and test API
 	if err := o.ConnectMatrix(); err != nil {
 		return err
 	}
