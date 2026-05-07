@@ -119,6 +119,10 @@ type OperationResult struct {
 	MembersSkipped             int
 	MembersFailed              int
 
+	// Cleanup stats
+	RoomsLeft       int
+	RoomsLeftFailed int
+
 	// Output file
 	OutputFile string
 }
@@ -684,7 +688,7 @@ func (o *Orchestrator) ImportMemberships(progress ProgressCallback) (*OperationR
 	result.MembersFailed = teamStats.MembersFailed + channelStats.MembersFailed
 
 	logger.Info("=== ImportMemberships Completed ===")
-	logger.Info("Total: added=%d, skipped=%d, failed=%d", 
+	logger.Info("Total: added=%d, skipped=%d, failed=%d",
 		result.MembersAdded, result.MembersSkipped, result.MembersFailed)
 	logger.Success("Membership import completed successfully")
 
@@ -990,4 +994,57 @@ func (o *Orchestrator) ImportMessages(progress matrix.MessageImportCallback) (*I
 		FilesSkipped:     result.Stats.FilesSkipped,
 		MappingFile:      newMappingFile,
 	}, nil
+}
+
+// LeaveRooms makes the migration admin user leave all migrated rooms and spaces
+func (o *Orchestrator) LeaveRooms(progress ProgressCallback) (*OperationResult, error) {
+	result := &OperationResult{}
+
+	if o.mxClient == nil {
+		return nil, fmt.Errorf("not connected to Matrix")
+	}
+
+	// Requires import_assets mapping to know which rooms exist
+	mappingFile := o.state.GetStepOutputFile(StepImportAssets)
+	if mappingFile == "" {
+		return nil, fmt.Errorf("no mapping file found - run 'import assets' first")
+	}
+
+	// Start step
+	o.state.StartStep(StepLeaveRooms)
+	if err := o.SaveState(); err != nil {
+		return nil, err
+	}
+
+	// Load mapping
+	mapping, err := LoadMapping(mappingFile)
+	if err != nil {
+		o.state.FailStep(StepLeaveRooms, err)
+		o.SaveState()
+		return nil, fmt.Errorf("failed to load mapping: %w", err)
+	}
+
+	logger.Info("Leaving %d spaces and %d rooms", len(mapping.Teams), len(mapping.Channels))
+
+	// Create importer
+	importer := matrix.NewImporter(o.mxClient)
+
+	// Leave all rooms
+	var leaveProgress matrix.ImportProgressCallback
+	if progress != nil {
+		leaveProgress = func(stage string, current, total int, item string) {
+			progress(stage, current, total, item)
+			o.state.UpdateStepProgress(StepLeaveRooms, current, total)
+		}
+	}
+
+	leaveStats := importer.LeaveAllRooms(mapping.Teams, mapping.Channels, leaveProgress)
+	result.RoomsLeft = leaveStats.RoomsLeft
+	result.RoomsLeftFailed = leaveStats.RoomsLeftFailed
+
+	logger.Info("=== LeaveRooms Completed ===")
+	logger.Info("Left=%d, failed=%d", result.RoomsLeft, result.RoomsLeftFailed)
+
+	o.state.CompleteStep(StepLeaveRooms, "")
+	return result, o.SaveState()
 }

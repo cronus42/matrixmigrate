@@ -146,6 +146,8 @@ type ImportStats struct {
 	MembersFailed   int `json:"members_failed"`
 	RoomsLinked     int `json:"rooms_linked"`
 	RoomsLinkFailed int `json:"rooms_link_failed"`
+	RoomsLeft       int `json:"rooms_left"`
+	RoomsLeftFailed int `json:"rooms_left_failed"`
 }
 
 // RoomPreset defines room creation presets
