@@ -461,6 +461,44 @@ func (i *Importer) LinkRoomsToSpaces(
 	return stats, nil
 }
 
+// LeaveAllRooms makes the migration admin user leave all created rooms and spaces.
+// Should be called after all memberships have been applied.
+func (i *Importer) LeaveAllRooms(
+	spaceMapping map[string]string,
+	roomMapping map[string]string,
+	progress ImportProgressCallback,
+) *ImportStats {
+	stats := &ImportStats{}
+
+	// Collect unique room/space IDs
+	roomIDs := make(map[string]bool)
+	for _, id := range spaceMapping {
+		roomIDs[id] = true
+	}
+	for _, id := range roomMapping {
+		roomIDs[id] = true
+	}
+
+	total := len(roomIDs)
+	idx := 0
+	for roomID := range roomIDs {
+		idx++
+		if progress != nil {
+			progress("leave_rooms", idx, total, roomID)
+		}
+		if err := i.client.LeaveRoom(roomID); err != nil {
+			logger.Warn("Failed to leave room %s: %v", roomID, err)
+			stats.RoomsLeftFailed++
+		} else {
+			logger.Info("Admin left room %s", roomID)
+			stats.RoomsLeft++
+		}
+	}
+
+	logger.Info("Admin user left %d rooms (%d failed)", stats.RoomsLeft, stats.RoomsLeftFailed)
+	return stats
+}
+
 // ImportAssetsResult holds the result of importing assets
 type ImportAssetsResult struct {
 	UserMapping  map[string]string
